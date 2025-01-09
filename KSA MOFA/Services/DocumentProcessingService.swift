@@ -7,6 +7,9 @@ enum DocumentProcessingError: Error {
     case pdfAccessError
     case csvParseError
     case unsupportedFileType
+    case invalidPDF
+    case invalidCSV
+    case fileNotFound
     
     var localizedDescription: String {
         switch self {
@@ -18,6 +21,12 @@ enum DocumentProcessingError: Error {
             return "Could not parse CSV file"
         case .unsupportedFileType:
             return "Unsupported file type"
+        case .invalidPDF:
+            return "Invalid PDF file"
+        case .invalidCSV:
+            return "Invalid CSV file"
+        case .fileNotFound:
+            return "File not found"
         }
     }
 }
@@ -38,6 +47,8 @@ class DocumentProcessingService {
             return try processPDF(at: url)
         case "csv":
             return try processCSV(at: url)
+        case "txt":
+            return try processTXT(at: url)
         default:
             throw DocumentProcessingError.unsupportedFileType
         }
@@ -139,5 +150,18 @@ class DocumentProcessingService {
         ]
         
         return ProcessedDocument(content: content, metadata: metadata, sourceFile: url.lastPathComponent)
+    }
+    
+    private func processTXT(at url: URL) throws -> ProcessedDocument {
+        guard let txtString = try? String(contentsOf: url, encoding: .utf8) else {
+            throw DocumentProcessingError.fileNotFound
+        }
+        
+        let metadata: [String: String] = [
+            "type": "txt",
+            "filename": url.lastPathComponent
+        ]
+        
+        return ProcessedDocument(content: txtString, metadata: metadata, sourceFile: url.lastPathComponent)
     }
 }

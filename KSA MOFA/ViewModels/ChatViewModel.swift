@@ -22,48 +22,58 @@ class ChatViewModel: ObservableObject {
     private func loadDocumentsFromDocsFolder() async {
         isProcessingDocuments = true
         
-        // Get the documents directory path
         let fileManager = FileManager.default
-        let docsPath = (try? fileManager.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true))?
-            .appendingPathComponent("docs")
         
-        guard let docsURL = docsPath else {
+        // Get the app's documents directory
+        guard let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            print("Could not access documents directory")
             isProcessingDocuments = false
             return
         }
         
-        // Create docs directory if it doesn't exist
-        if !fileManager.fileExists(atPath: docsURL.path) {
-            try? fileManager.createDirectory(at: docsURL, withIntermediateDirectories: true)
-        }
+        let docsFolder = documentsPath.appendingPathComponent("Docs")
         
-        // Get all files in the docs directory
-        guard let files = try? fileManager.contentsOfDirectory(at: docsURL, includingPropertiesForKeys: nil) else {
-            isProcessingDocuments = false
-            return
-        }
-        
-        let supportedExtensions = ["pdf", "csv"]
-        let documentFiles = files.filter { supportedExtensions.contains($0.pathExtension.lowercased()) }
-        
-        if documentFiles.isEmpty {
-            print("No documents found in docs folder")
-            isProcessingDocuments = false
-            return
-        }
-        
-        // Process each document
-        var successCount = 0
-        for url in documentFiles {
+        // Create Docs directory if it doesn't exist
+        if !fileManager.fileExists(atPath: docsFolder.path) {
             do {
-                try await vectorDBService.processAndEmbedDocument(at: url)
-                successCount += 1
+                try fileManager.createDirectory(at: docsFolder, withIntermediateDirectories: true)
+                
+                // Copy default document if it exists
+                if let defaultDocURL = Bundle.main.url(forResource: "mofa_services", withExtension: "txt") {
+                    let destinationURL = docsFolder.appendingPathComponent("mofa_services.txt")
+                    try fileManager.copyItem(at: defaultDocURL, to: destinationURL)
+                    print("Copied default document to: \(destinationURL.path)")
+                } else {
+                    print("Default document not found in bundle")
+                }
             } catch {
-                print("Error processing document \(url.lastPathComponent): \(error)")
+                print("Error setting up Docs folder: \(error.localizedDescription)")
             }
         }
         
-        hasLoadedDocuments = successCount > 0
+        // Get all files in the Docs directory
+        do {
+            let files = try fileManager.contentsOfDirectory(at: docsFolder, includingPropertiesForKeys: nil)
+            let supportedExtensions = ["pdf", "csv", "txt"]
+            let documentFiles = files.filter { supportedExtensions.contains($0.pathExtension.lowercased()) }
+            
+            if documentFiles.isEmpty {
+                print("No documents found in Docs folder")
+                isProcessingDocuments = false
+                return
+            }
+            
+            print("Found \(documentFiles.count) documents in Docs folder")
+            print("Document paths: \(documentFiles.map { $0.path })")
+            
+            // Process all documents
+            await vectorDBService.processDocuments(urls: documentFiles)
+            hasLoadedDocuments = true
+            
+        } catch {
+            print("Error reading Docs folder: \(error.localizedDescription)")
+        }
+        
         isProcessingDocuments = false
     }
     
@@ -73,55 +83,23 @@ class ChatViewModel: ObservableObject {
         let userMessage = Message(content: inputMessage, isUser: true)
         messages.append(userMessage)
         
-        let userMessageContent = inputMessage
+        let userQuery = inputMessage
         inputMessage = ""
+        isLoading = true
         
         Task {
-            isLoading = true
             do {
-                let response: String
-                
-                if hasLoadedDocuments {
-                    // Try to find relevant documents first
-                    let relevantDocs = try await vectorDBService.findSimilarDocuments(for: userMessageContent)
-                    
-                    if !relevantDocs.isEmpty {
-                        // Create context from relevant documents
-                        let context = relevantDocs.map { doc in
-                            """
-                            Content from \(doc.sourceFile):
-                            \(doc.content)
-                            """
-                        }.joined(separator: "\n\n")
-                        
-                        // Create prompt with context
-                        let prompt = """
-                        Context information is below.
-                        ---------------------
-                        \(context)
-                        ---------------------
-                        Given the context information and not prior knowledge, answer the question: \(userMessageContent)
-                        If the context doesn't contain the answer, respond as a general MOFA assistant.
-                        """
-                        
-                        response = try await openAIService.generateResponse(for: prompt)
-                    } else {
-                        // Fallback to general MOFA chat if no relevant documents found
-                        response = try await mofaChatService.generateResponse(for: userMessageContent)
-                    }
-                } else {
-                    // Use general MOFA chat if no documents are loaded
-                    response = try await mofaChatService.generateResponse(for: userMessageContent)
+                let response = try await openAIService.generateResponse(for: userQuery)
+                await MainActor.run {
+                    messages.append(Message(content: response, isUser: false))
+                    isLoading = false
                 }
-                
-                let assistantMessage = Message(content: response, isUser: false)
-                messages.append(assistantMessage)
             } catch {
-                print("Error generating response: \(error)")
-                let errorMessage = Message(content: "Sorry, I encountered an error. Please try again.", isUser: false)
-                messages.append(errorMessage)
+                await MainActor.run {
+                    messages.append(Message(content: "I apologize, but I encountered an error while processing your request. Please try again.", isUser: false))
+                    isLoading = false
+                }
             }
-            isLoading = false
         }
     }
 }
