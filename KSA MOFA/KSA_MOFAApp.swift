@@ -11,7 +11,7 @@ import SwiftUI
 struct KSA_MOFAApp: App {
     var body: some Scene {
         WindowGroup {
-            MainTabView()
+            SplashView()
         }
     }
 }

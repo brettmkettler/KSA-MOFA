@@ -1,7 +1,12 @@
 import SwiftUI
+import PhotosUI
 
 struct ChatView: View {
     @StateObject private var viewModel = ChatViewModel()
+    @State private var showImagePicker = false
+    @State private var showCamera = false
+    @State private var selectedImage: UIImage?
+    @State private var showImageSource = false
     
     var body: some View {
         VStack(spacing: 0) {
@@ -70,6 +75,15 @@ struct ChatView: View {
                 Divider()
                 
                 HStack {
+                    Button(action: {
+                        showImageSource = true
+                    }) {
+                        Image(systemName: "photo")
+                            .font(.system(size: 24))
+                            .foregroundColor(.blue)
+                    }
+                    .padding(.horizontal, 8)
+                    
                     TextField("Ask me about KSA MOFA services...", text: $viewModel.inputMessage)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                         .disabled(viewModel.isLoading)
@@ -89,7 +103,27 @@ struct ChatView: View {
             .shadow(radius: 1)
         }
         .navigationBarTitleDisplayMode(.inline)
-        .navigationTitle("KSA MOFA Assistant")
+        .confirmationDialog("Choose Image Source", isPresented: $showImageSource) {
+            Button("Camera") {
+                showCamera = true
+            }
+            Button("Photo Library") {
+                showImagePicker = true
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .sheet(isPresented: $showImagePicker) {
+            ImagePicker(image: $selectedImage, sourceType: .photoLibrary)
+        }
+        .sheet(isPresented: $showCamera) {
+            ImagePicker(image: $selectedImage, sourceType: .camera)
+        }
+        .onChange(of: selectedImage) { image in
+            if let image = image {
+                viewModel.sendImage(image)
+                selectedImage = nil
+            }
+        }
     }
 }
 
@@ -102,16 +136,75 @@ struct MessageBubble: View {
                 Spacer()
             }
             
-            Text(message.content)
-                .padding()
-                .background(message.isUser ? Color.blue : Color.gray.opacity(0.2))
-                .foregroundColor(message.isUser ? .white : .primary)
-                .cornerRadius(15)
-                .frame(maxWidth: UIScreen.main.bounds.width * 0.7, alignment: message.isUser ? .trailing : .leading)
+            VStack(alignment: message.isUser ? .trailing : .leading) {
+                switch message.content {
+                case .text(let text):
+                    if message.isUser {
+                        Text(text)
+                            .padding()
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(15)
+                    } else {
+                        Text(LocalizedStringKey(text))
+                            .textSelection(.enabled)
+                            .padding()
+                            .background(Color.gray.opacity(0.2))
+                            .foregroundColor(.primary)
+                            .cornerRadius(15)
+                    }
+                    
+                case .image(let image):
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 200)
+                        .cornerRadius(15)
+                }
+            }
+            .frame(maxWidth: UIScreen.main.bounds.width * 0.7, alignment: message.isUser ? .trailing : .leading)
             
             if !message.isUser {
                 Spacer()
             }
+        }
+    }
+}
+
+struct ImagePicker: UIViewControllerRepresentable {
+    @Binding var image: UIImage?
+    let sourceType: UIImagePickerController.SourceType
+    
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = sourceType
+        picker.delegate = context.coordinator
+        return picker
+    }
+    
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: ImagePicker
+        
+        init(_ parent: ImagePicker) {
+            self.parent = parent
+        }
+        
+        func imagePickerController(_ picker: UIImagePickerController,
+                                 didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let image = info[.originalImage] as? UIImage {
+                parent.image = image
+            }
+            picker.dismiss(animated: true)
+        }
+        
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            picker.dismiss(animated: true)
         }
     }
 }

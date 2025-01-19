@@ -10,12 +10,18 @@
     <string>1</string>
     <key>ITSAppUsesNonExemptEncryption</key>
     <false/>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <key>NSCameraUsageDescription</key>
+    <string>We need camera access to analyze images and documents.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>We need photo library access to analyze your selected images.</string>
+    <key>NSFaceIDUsageDescription</key>
+    <string>We use Face ID to securely authenticate you to the KSA MOFA app.</string>
     <key>UIBackgroundModes</key>
     <array>
         <string>remote-notification</string>
     </array>
-    <key>LSRequiresIPhoneOS</key>
-    <true/>
     <key>UILaunchScreen</key>
     <dict/>
     <key>UISupportedInterfaceOrientations</key>

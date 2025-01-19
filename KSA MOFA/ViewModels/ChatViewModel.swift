@@ -1,86 +1,73 @@
 import Foundation
-import SwiftUI
+import UIKit
 
-@MainActor
 class ChatViewModel: ObservableObject {
+    private let openAIService = OpenAIService()
+    private let fileManager = FileManager.default
+    
     @Published var messages: [Message] = []
     @Published var inputMessage: String = ""
-    @Published var isLoading: Bool = false
-    @Published var isProcessingDocuments: Bool = false
-    
-    private let vectorDBService = VectorDBService()
-    private let mofaChatService = MOFAChatService()
-    private let openAIService = OpenAIService()
-    private var hasLoadedDocuments = false
+    @Published var isLoading = false
+    @Published var isProcessingDocuments = false
     
     init() {
-        Task {
-            await loadDocumentsFromDocsFolder()
-        }
+        loadDocuments()
     }
     
-    private func loadDocumentsFromDocsFolder() async {
+    private func loadDocuments() {
         isProcessingDocuments = true
-        
-        let fileManager = FileManager.default
-        
-        // Get the app's documents directory
-        guard let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            print("Could not access documents directory")
-            isProcessingDocuments = false
-            return
-        }
-        
-        let docsFolder = documentsPath.appendingPathComponent("Docs")
-        
-        // Create Docs directory if it doesn't exist
-        if !fileManager.fileExists(atPath: docsFolder.path) {
+        Task {
             do {
-                try fileManager.createDirectory(at: docsFolder, withIntermediateDirectories: true)
+                // Get the app's documents directory
+                guard let documentsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
+                    print("Could not access documents directory")
+                    await MainActor.run { self.isProcessingDocuments = false }
+                    return
+                }
                 
-                // Copy default document if it exists
-                if let defaultDocURL = Bundle.main.url(forResource: "mofa_services", withExtension: "txt") {
-                    let destinationURL = docsFolder.appendingPathComponent("mofa_services.txt")
-                    try fileManager.copyItem(at: defaultDocURL, to: destinationURL)
-                    print("Copied default document to: \(destinationURL.path)")
-                } else {
-                    print("Default document not found in bundle")
+                let docsFolder = documentsPath.appendingPathComponent("Docs")
+                
+                // Create Docs directory if it doesn't exist
+                if !fileManager.fileExists(atPath: docsFolder.path) {
+                    try fileManager.createDirectory(at: docsFolder, withIntermediateDirectories: true)
+                    
+                    // Copy default document if it exists
+                    if let defaultDocURL = Bundle.main.url(forResource: "mofa_services", withExtension: "txt") {
+                        let destinationURL = docsFolder.appendingPathComponent("mofa_services.txt")
+                        try fileManager.copyItem(at: defaultDocURL, to: destinationURL)
+                        print("Copied default document to: \(destinationURL.path)")
+                    }
+                }
+                
+                // Get all files in the Docs directory
+                let files = try fileManager.contentsOfDirectory(at: docsFolder, includingPropertiesForKeys: nil)
+                let supportedExtensions = ["pdf", "csv", "txt"]
+                let documentFiles = files.filter { supportedExtensions.contains($0.pathExtension.lowercased()) }
+                
+                print("Found \(documentFiles.count) documents in Docs folder")
+                
+                // Process each document's content for context
+                for documentURL in documentFiles {
+                    if let content = try? String(contentsOf: documentURL, encoding: .utf8) {
+                        print("Processed document: \(documentURL.lastPathComponent)")
+                        // Here you would typically process the content into your knowledge base
+                        // For now, we're just loading the documents
+                    }
                 }
             } catch {
-                print("Error setting up Docs folder: \(error.localizedDescription)")
+                print("Error processing documents: \(error)")
             }
-        }
-        
-        // Get all files in the Docs directory
-        do {
-            let files = try fileManager.contentsOfDirectory(at: docsFolder, includingPropertiesForKeys: nil)
-            let supportedExtensions = ["pdf", "csv", "txt"]
-            let documentFiles = files.filter { supportedExtensions.contains($0.pathExtension.lowercased()) }
             
-            if documentFiles.isEmpty {
-                print("No documents found in Docs folder")
+            await MainActor.run {
                 isProcessingDocuments = false
-                return
             }
-            
-            print("Found \(documentFiles.count) documents in Docs folder")
-            print("Document paths: \(documentFiles.map { $0.path })")
-            
-            // Process all documents
-            await vectorDBService.processDocuments(urls: documentFiles)
-            hasLoadedDocuments = true
-            
-        } catch {
-            print("Error reading Docs folder: \(error.localizedDescription)")
         }
-        
-        isProcessingDocuments = false
     }
     
     func sendMessage() {
         guard !inputMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         
-        let userMessage = Message(content: inputMessage, isUser: true)
+        let userMessage = Message(content: .text(inputMessage), isUser: true)
         messages.append(userMessage)
         
         let userQuery = inputMessage
@@ -89,14 +76,39 @@ class ChatViewModel: ObservableObject {
         
         Task {
             do {
-                let response = try await openAIService.generateResponse(for: userQuery)
+                let response = try await openAIService.generateResponse(
+                    for: userQuery,
+                    withContext: nil,
+                    previousMessages: Array(messages.dropLast())
+                )
                 await MainActor.run {
-                    messages.append(Message(content: response, isUser: false))
+                    messages.append(Message(content: .text(response), isUser: false))
                     isLoading = false
                 }
             } catch {
                 await MainActor.run {
-                    messages.append(Message(content: "I apologize, but I encountered an error while processing your request. Please try again.", isUser: false))
+                    messages.append(Message(content: .text("I apologize, but I encountered an error while processing your request. Please try again."), isUser: false))
+                    isLoading = false
+                }
+            }
+        }
+    }
+    
+    func sendImage(_ image: UIImage) {
+        let userMessage = Message(content: .image(image), isUser: true)
+        messages.append(userMessage)
+        isLoading = true
+        
+        Task {
+            do {
+                let analysis = try await openAIService.analyzeImage(image)
+                await MainActor.run {
+                    messages.append(Message(content: .text(analysis), isUser: false))
+                    isLoading = false
+                }
+            } catch {
+                await MainActor.run {
+                    messages.append(Message(content: .text("I apologize, but I couldn't analyze the image. Please try again."), isUser: false))
                     isLoading = false
                 }
             }
